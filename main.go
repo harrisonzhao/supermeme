@@ -1,7 +1,17 @@
 package main
 
-import "fmt"
+import (
+	"github.com/labstack/echo"
+	"github.com/labstack/echo/engine/standard"
+)
 
 func main() {
-	fmt.Println("hello world")
+	e := echo.New()
+	e.Static("/", "public")
+	e.File("/", "public/index.html")
+	e.Run(standard.New(":3000"))
+	//e.Run(standard.WithTLS(
+	//	":443",
+	//	"keys/www.catchupbot.com/fullchain.pem",
+	//	"keys/www.catchupbot.com/privkey.pem"))
 }
