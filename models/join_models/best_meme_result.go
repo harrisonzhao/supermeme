@@ -1,4 +1,4 @@
-package join_models
+package joinmodels
 
 import (
 	"github.com/harrisonzhao/supermeme/models"
@@ -10,7 +10,7 @@ type BestMemeResult struct {
 	Score float64
 }
 
-func BestMemeResultsByKeywords(db models.XODB, keywords []string) ([]*BestMemeResult, error) {
+func BestMemeResultsByKeywords(db models.XODB, keywords []string) (*BestMemeResult, error) {
 	if len(keywords) == 0 {
 		return nil, nil
 	}
@@ -33,7 +33,7 @@ func BestMemeResultsByKeywords(db models.XODB, keywords []string) ([]*BestMemeRe
 	}
 	defer rows.Close()
 	// load results
-	res := []*BestMemeResult{}
+	var res *BestMemeResult = nil
 	for rows.Next() {
 		bmr := BestMemeResult{}
 
@@ -43,7 +43,7 @@ func BestMemeResultsByKeywords(db models.XODB, keywords []string) ([]*BestMemeRe
 			return nil, err
 		}
 
-		res = append(res, &bmr)
+		res = &bmr
 	}
 
 	return res, nil
