@@ -3,7 +3,9 @@
 image processing
 =============
 in order for tesseract to extract text from memes
-~~~ cp tessdata/eng.traineddata /usr/local/share/tessdata/eng.traineddata ~~~
+~~~
+cp tessdata/eng.traineddata /usr/local/share/tessdata/eng.traineddata
+~~~
 
 
 cli tools
