@@ -5,6 +5,7 @@ import (
 	"github.com/harrisonzhao/supermeme/controllers"
 	"github.com/harrisonzhao/supermeme/shared/constants"
 	"github.com/harrisonzhao/supermeme/shared/db"
+	"log"
 	"net/http"
 )
 
@@ -19,6 +20,6 @@ func main() {
 	fs := http.FileServer(http.Dir(constants.PublicDir))
 	r.PathPrefix("/public/").Handler(http.StripPrefix("/public/", fs))
 	http.Handle("/", r)
-	//http.ListenAndServe(":3000", nil)
-	http.ListenAndServeTLS(":443", "www.catchupbot.com/fullchain.pem", "www.catchupbot.com/privkey.pem", nil)
+	//log.Fatal(http.ListenAndServe(":3000", nil))
+	log.Fatal(http.ListenAndServeTLS(":443", "www.catchupbot.com/fullchain.pem", "www.catchupbot.com/privkey.pem", nil))
 }
