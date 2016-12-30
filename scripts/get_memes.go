@@ -19,8 +19,8 @@ import (
 // Request statics
 const (
   // Query parameters
-  page_start = 57 // Will query memes from, and including, this page
-  page_end = 58 // Will query memes up to, but not including, this page
+  page_start = 1 // Will query memes from, and including, this page
+  page_end = 2 // Will query memes up to, but not including, this page
   insert_limit = 1 // Will insert the first insert_limit memes into the database
 
   // URL parameters
@@ -31,7 +31,9 @@ const (
   meme_url = "https://api.imgur.com/3/gallery/t/memes/time"
 )
 
-var reg, _ = regexp.Compile("[^A-Za-z0-9 ]+")
+var regNonLetters, _ = regexp.Compile("[^A-Za-z0-9 ]+")
+var regStopWords, _ = regexp.Compile(
+  "^(i|am|im|not|really|confident|but|i|think|it|is|its|a|in|on|and|of|the|he|seems)$")
 
 type Tag struct {
   TotalItems int                       `json:"total_items"`
@@ -188,12 +190,14 @@ func populateTextForMemes(rawMemes []MemeRow) ([]MemeRow) {
       }
       //fmt.Println(meme.URL, meme.NetUps, meme.Views, caption)
       
-      caption := reg.ReplaceAllString(rawCaption, "")
+      caption := regNonLetters.ReplaceAllString(rawCaption, "")
       rawCaptionWords := strings.Split(caption, " ")
       keywordSet := make(map[string]bool)
       for _, rawCaptionWord := range rawCaptionWords {
         captionWord := strings.ToLower(rawCaptionWord)
-        keywordSet[captionWord] = true
+        if (!regStopWords.MatchString(captionWord)) {
+          keywordSet[captionWord] = true
+        }
       }
       var keywords []string
       for keyword := range keywordSet {
@@ -208,35 +212,24 @@ func populateTextForMemes(rawMemes []MemeRow) ([]MemeRow) {
   return memes
 }
 
-func main() {
-  rawMemes := getAllMemes()
-  memes := populateTextForMemes(rawMemes)
-
-  //fmt.Println(memes)
-
-  dbutil.InitDb("alpha")
-  db := dbutil.DbContext()
-
-  // Get all the memes that are already in the database
-  var urls []string
-  for _, meme := range memes {
-    urls = append(urls, meme.URL)
+// Get all the memes that are already in the database
+func divideIntoOldAndNewMemes(db models.XODB, memes []MemeRow) ([]MemeRow, []MemeRow, error) {
+  // Query for existing memes based on url
+  urls := make([]interface{}, len(memes))
+  for i, meme := range memes {
+    urls[i] = meme.URL
   }
-  
   sql, args, err := squirrel.
     Select("id", "url").
     From("alpha.meme").
     Where("url IN (" + squirrel.Placeholders(len(urls)) + ")", urls...).
     ToSql()
   if (err != nil) {
-    glog.Fatal(err)
+    return nil, nil, err
   }
-
-  fmt.Println(sql, args)
-  
-  rows, err := db.Query(sql, args)
+  rows, err := db.Query(sql, args...)
   if (err != nil) {
-    glog.Fatal(err)
+    return nil, nil, err
   }
 
   idTemp := new(int)
@@ -247,6 +240,7 @@ func main() {
     urlToIdMap[*urlTemp] = *idTemp
   }
 
+  // Divide up memes into old memes and new memes
   var oldMemes []MemeRow
   var newMemes []MemeRow
   for _, meme := range memes {
@@ -259,56 +253,224 @@ func main() {
     }
   }
 
-  fmt.Println("oldmemes", oldMemes)
-  fmt.Println("newmemes", newMemes)
-/*
-   
-      rows, err := db.Query("SELECT id FROM alpha.meme WHERE url = ?", meme.URL)
-      if (err != nil) {
-        glog.Error(fmt.Sprintf("Could not insert keyword into database for image: %s", nullStringToString(meme.URL)), err)
-        continue
-      }
-      
-      // Database queries
-      sqlMeme := models.Meme{
-        Source: meme.Source,
-        URL: meme.URL,
-        TopText: meme.TopText,
-        BottomText: meme.BottomText,
-        NetUps: meme.NetUps,
-        Views: meme.Views,
-        NumKeywords
-      }
-      
-      err = meme.Save(db)
-      if (err != nil) {
-        glog.Error(fmt.Sprintf("Could not insert image into database: %s", nullStringToString(meme.URL)), err)
-        continue
-      }
+  return oldMemes, newMemes, nil
+}
 
-      rows, err := db.Query("SELECT id FROM alpha.meme WHERE url = ?", meme.URL)
-      if (err != nil) {
-        glog.Error(fmt.Sprintf("Could not insert keyword into database for image: %s", nullStringToString(meme.URL)), err)
-        continue
-      }
-      defer rows.Close()
-      if (!rows.Next()) {
-        glog.Error(fmt.Sprintf("Could not insert keyword into database for image: %s", nullStringToString(meme.URL)), err)
-        continue
-      }
-      id := new(int64)
-      err = rows.Scan(id)
-      if (err != nil) {
-        glog.Error(fmt.Sprintf("Could not insert keyword into database for image: %s", nullStringToString(meme.URL)), err)
-        continue
-      }
+func updateMemes(db models.XODB, memes []MemeRow) (error) {
+  // TODO: Modify so we don't delete all keywords every time
+  // Delete meme keywords
+  ids := make([]interface{}, len(memes))
+  for i, meme := range memes {
+    ids[i] = meme.ID
+  }
+  sql, args, err := squirrel.
+    Delete("alpha.meme_keyword").
+    Where("meme_id IN (" + squirrel.Placeholders(len(ids)) + ")", ids...).
+    ToSql()
+  if (err != nil) {
+    return err
+  }
+  fmt.Println(sql, args)
+  _, err = db.Exec(sql, args...)
+  if (err != nil) {
+    return err
+  }
 
-      
-      _, err = db.Exec("INSERT INTO alpha.meme_keyword (meme_id, keyword) VALUES (?, ?)", memeKeyword.MemeID, memeKeyword.Keyword)
-      if (err != nil) {
-        glog.Error(fmt.Sprintf("Could not insert keyword into database for image: %s", nullStringToString(meme.URL)), err)
-        continue
-      }
+  // Update memes
+  var memeRowValues []interface{}
+  for _, meme := range memes {
+    memeRowValues = append(memeRowValues, []interface{}{
+      meme.ID,
+      meme.Source,
+      meme.URL,
+      meme.TopText,
+      meme.BottomText,
+      meme.NetUps,
+      meme.Views,
+      len(meme.Keywords),
+    }...)
+  }
+  sql = "INSERT INTO alpha.meme (id, source, url, top_text, bottom_text, net_ups, views, num_keywords) VALUES "
+  for i, _ := range memes {
+    sql = sql + "(?,?,?,?,?,?,?,?)"
+    if (i < len(memes) - 1) {
+      sql = sql + ", "
     }
-  }*/
+  }
+  sql = sql + " ON DUPLICATE KEY UPDATE net_ups = VALUES(net_ups), views = VALUES(views), num_keywords = VALUES(num_keywords)"
+
+  fmt.Println(sql, memeRowValues)
+  _, err = db.Exec(sql, memeRowValues...)
+  if (err != nil) {
+    return err
+  }
+
+  // Get total number of keywords
+  totalKeywords := 0
+  for _, meme := range memes {
+    totalKeywords = totalKeywords + len(meme.Keywords)
+  }
+  if totalKeywords <= 0 {
+    glog.Infoln("No keywords associated to old memes")
+    return nil
+  }
+
+  // Insert keywords
+  var memeKeywordRowValues [][]interface{}
+  for _, meme := range memes {
+    for _, keyword := range meme.Keywords {
+      memeKeywordRowValues = append(memeKeywordRowValues, []interface{}{
+        meme.ID,
+        keyword,
+      })
+    }
+  }
+  builder := squirrel.
+    Insert("alpha.meme_keyword").
+    Columns("meme_id", "keyword")
+  for _, memeKeywordRowValue := range memeKeywordRowValues {
+    builder = builder.Values(memeKeywordRowValue...)
+  }
+  sql, args, err = builder.ToSql()
+  if (err != nil) {
+    return err
+  }
+  fmt.Println(sql, args)
+  _, err = db.Exec(sql, args...)
+  if (err != nil) {
+    return err
+  }
+
+  return nil
+}
+
+func insertMemes(db models.XODB, memes [] MemeRow) (error) {
+  // Insert memes
+  memeRowValues := make([][]interface{}, len(memes))
+  for i, meme := range memes {
+    memeRowValues[i] = []interface{}{
+      meme.ID,
+      meme.Source,
+      meme.URL,
+      meme.TopText,
+      meme.BottomText,
+      meme.NetUps,
+      meme.Views,
+      len(meme.Keywords),
+    }
+  }
+  builder := squirrel.
+    Insert("alpha.meme").
+    Columns("id", "source", "url", "top_text", "bottom_text", "net_ups", "views", "num_keywords")
+  for _, memeRowValue := range memeRowValues {
+    builder = builder.Values(memeRowValue...)
+  }
+  sql, args, err := builder.ToSql()
+  if (err != nil) {
+    return err
+  }
+  fmt.Println(sql, args)
+  _, err = db.Exec(sql, args...)
+  if (err != nil) {
+    return err
+  }
+
+  // Get total number of keywords
+  totalKeywords := 0
+  for _, meme := range memes {
+    totalKeywords = totalKeywords + len(meme.Keywords)
+  }
+  if totalKeywords <= 0 {
+    glog.Infoln("No keywords associated to new memes")
+    return nil
+  }
+
+  // Query for ids of new memes
+  urls := make([]interface{}, len(memes))
+  for i, meme := range memes {
+    urls[i] = meme.URL
+  }
+  sql, args, err = squirrel.
+    Select("id", "url").
+    From("alpha.meme").
+    Where("url IN (" + squirrel.Placeholders(len(urls)) + ")", urls...).
+    ToSql()
+  if (err != nil) {
+    return err
+  }
+  rows, err := db.Query(sql, args...)
+  if (err != nil) {
+    return err
+  }
+
+  idTemp := new(int)
+  urlTemp := new(string)
+  urlToIdMap := make(map[string]int)
+  for rows.Next() {
+    err = rows.Scan(idTemp, urlTemp)
+    urlToIdMap[*urlTemp] = *idTemp
+  }
+
+  // Insert keywords
+  var memeKeywordRowValues [][]interface{}
+  for _, meme := range memes {
+    for _, keyword := range meme.Keywords {
+      memeKeywordRowValues = append(memeKeywordRowValues, []interface{}{
+        urlToIdMap[meme.URL],
+        keyword,
+      })
+    }
+  }
+  builder = squirrel.
+    Insert("alpha.meme_keyword").
+    Columns("meme_id", "keyword")
+  for _, memeKeywordRowValue := range memeKeywordRowValues {
+    builder = builder.Values(memeKeywordRowValue...)
+  }
+  sql, args, err = builder.ToSql()
+  if (err != nil) {
+    return err
+  }
+  fmt.Println(sql, args)
+  _, err = db.Exec(sql, args...)
+  if (err != nil) {
+    return err
+  }
+
+  return nil
+}
+
+func main() {
+  dbutil.InitDb("alpha")
+  db := dbutil.DbContext()
+
+  rawMemes := getAllMemes()
+  memes := populateTextForMemes(rawMemes)
+  if (len(memes) == 0) {
+    return
+  }
+
+  //fmt.Println(memes)
+
+  oldMemes, newMemes, err := divideIntoOldAndNewMemes(db, memes)
+  if (err != nil) {
+    glog.Fatal("Could not divide memes into old and new memes", err)
+  }
+
+  fmt.Println(oldMemes)
+  fmt.Println(newMemes)
+
+  if (len(oldMemes) > 0) {
+    err = updateMemes(db, oldMemes)
+    if (err != nil) {
+      glog.Fatal("Could not update old memes in the database", err)
+    }
+  }
+
+  if (len(newMemes) > 0) {
+    err = insertMemes(db, newMemes)
+    if (err != nil) {
+      glog.Fatal("Could not insert new memes into database", err)
+    }
+  }
 }
