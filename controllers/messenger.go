@@ -56,6 +56,7 @@ func messageReceived(event messenger.Event, opts messenger.MessageOpts, msg mess
 	if err != nil {
 		glog.Error(err, msg.Text, msg.QuickReply != nil)
 		mq := messenger.MessageQuery{}
+		mq.RecipientID(senderId)
 		mq.Text("We had a problem with our software! We could not complete your request.")
 		mess.SendMessage(mq)
 	}
@@ -87,11 +88,14 @@ func findBestMeme(senderId string, msg messenger.ReceivedMessage) error {
 	}
 	db := dbutil.DbContext()
 	bmr, err := joinmodels.BestMemeResultsByKeywords(db, queryWords)
-	if err != nil || bmr == nil {
+	if err != nil {
+		return err
+	}
+	if bmr == nil {
 		return errors.New("We could not match your query to a suitable meme.")
 	}
 	meme, err := models.MemeByID(db, bmr.ID)
-	if !meme.URL.Valid {
+	if meme == nil || !meme.URL.Valid {
 		return errors.New("We could not fetch the meme in mind at this time.")
 	}
 	response := responseText
@@ -109,7 +113,9 @@ func findBestMeme(senderId string, msg messenger.ReceivedMessage) error {
 			Payload: string(metadata[:]),
 		})
 	}
-	mq.Text(response)
+	if _, err = mess.SendSimpleMessage(senderId, response); err != nil {
+		return err
+	}
 	mq.Image(meme.URL.String)
 	if _, err = mess.SendMessage(mq); err != nil {
 		return err
@@ -120,6 +126,7 @@ func findBestMeme(senderId string, msg messenger.ReceivedMessage) error {
 func generateMeme(senderId string, msg messenger.ReceivedMessage) error {
 	var metadata imageMetadata
 	mq := messenger.MessageQuery{}
+	mq.RecipientID(senderId)
 	if msg.QuickReply != nil {
 		err := json.Unmarshal([]byte(msg.QuickReply.Payload[:]), &metadata)
 		if err != nil {
