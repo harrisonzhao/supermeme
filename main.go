@@ -20,5 +20,5 @@ func main() {
 	r.PathPrefix("/public/").Handler(http.StripPrefix("/public/", fs))
 	http.Handle("/", r)
 	//http.ListenAndServe(":3000", nil)
-	http.ListenAndServeTLS(":443", "keys/www.catchupbot.com/fullchain.pem", "keys/www.catchupbot.com/privkey.pem", nil)
+	http.ListenAndServeTLS(":443", "www.catchupbot.com/fullchain.pem", "www.catchupbot.com/privkey.pem", nil)
 }
