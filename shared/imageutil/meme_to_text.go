@@ -37,7 +37,7 @@ func GetTextFromMeme(img image.Image) (topText, botText string, err error) {
 				}
 			}
 			var file *os.File
-			file, err = ioutil.TempFile(os.TempDir(), "prefix")
+			file, err = ioutil.TempFile(os.TempDir(), "")
 			if err != nil {
 				return
 			}

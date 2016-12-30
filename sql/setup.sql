@@ -2,8 +2,8 @@ SET FOREIGN_KEY_CHECKS=0;
 DROP TABLE IF EXISTS meme;
 DROP TABLE IF EXISTS meme_keyword;
 DROP TABLE IF EXISTS system_metadata;
+DROP TABLE IF EXISTS temp_files;
 SET FOREIGN_KEY_CHECKS=1;
-
 
 CREATE TABLE IF NOT EXISTS meme (
 	id INT NOT NULL AUTO_INCREMENT,
@@ -35,4 +35,11 @@ CREATE TABLE IF NOT EXISTS system_metadata (
 	PRIMARY KEY( message_id ),
 	INDEX messenger_id_idx (messenger_id),
 	FOREIGN KEY (meme_id) REFERENCES meme(id)
+);
+
+CREATE TABLE IF NOT EXISTS temp_files (
+  message_id VARCHAR(128) NOT NULL,
+  file_name VARCHAR(50) NOT NULL,
+  time_created TIMESTAMP NOT NULL,
+  PRIMARY KEY ( message_id )
 );

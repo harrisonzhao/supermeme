@@ -1,17 +1,24 @@
 package main
 
 import (
-	"github.com/labstack/echo"
-)
-
-const (
-	publicDir = "public"
+	"github.com/gorilla/mux"
+	"github.com/harrisonzhao/supermeme/controllers"
+	"github.com/harrisonzhao/supermeme/shared/constants"
+	"github.com/harrisonzhao/supermeme/shared/db"
+	"net/http"
 )
 
 func main() {
-	e := echo.New()
-	e.Static("/", publicDir)
-	e.File("/", publicDir + "/index.html")
-	//e.Start(":3000")
-	//e.StartTLS(":443", "keys/www.catchupbot.com/fullchain.pem", "keys/www.catchupbot.com/privkey.pem")
+	dbutil.InitDb(constants.DbName)
+	r := mux.NewRouter().StrictSlash(true)
+	r.HandleFunc("/webhook", controllers.InitMessenger().Handler).Methods("POST")
+	r.HandleFunc("/webhook", controllers.MessengerWebhook).Methods("GET")
+	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, constants.PublicDir+"/index.html")
+	})
+	fs := http.FileServer(http.Dir(constants.PublicDir))
+	r.PathPrefix("/public/").Handler(http.StripPrefix("/public/", fs))
+	http.Handle("/", r)
+	//http.ListenAndServe(":3000", nil)
+	http.ListenAndServeTLS(":443", "keys/www.catchupbot.com/fullchain.pem", "keys/www.catchupbot.com/privkey.pem", nil)
 }

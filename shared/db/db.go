@@ -1,10 +1,10 @@
 package dbutil
 
 import (
-	"github.com/jmoiron/sqlx"
-	"github.com/golang/glog"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/golang/glog"
+	"github.com/jmoiron/sqlx"
 )
 
 var db *sqlx.DB

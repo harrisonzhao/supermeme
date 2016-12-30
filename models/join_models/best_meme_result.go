@@ -1,8 +1,8 @@
 package joinmodels
 
 import (
-	"github.com/harrisonzhao/supermeme/models"
 	"github.com/Masterminds/squirrel"
+	"github.com/harrisonzhao/supermeme/models"
 )
 
 type BestMemeResult struct {
@@ -19,7 +19,7 @@ func BestMemeResultsByKeywords(db models.XODB, keywords []string) (*BestMemeResu
 		"COUNT(mk.keyword) / COALESCE(NULLIF(m.num_keywords, 0), 1000) * LOG(GREATEST(m.net_ups, 1)) as score").
 		From("meme m").
 		Join("meme_keyword mk ON mk.meme_id = m.id").
-		Where("mk.keyword IN (" + squirrel.Placeholders(len(keywords)) +")", keywords).
+		Where("mk.keyword IN ("+squirrel.Placeholders(len(keywords))+")", keywords).
 		GroupBy("m.id").
 		OrderBy("score DESC").
 		Limit(1).

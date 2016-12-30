@@ -1,26 +1,39 @@
 package controllers
 
 import (
-	"github.com/labstack/echo"
-	"github.com/harrisonzhao/catchup/utils"
-	"net/http"
-	"gopkg.in/maciekmm/messenger-platform-go-sdk.v4"
-	"strings"
-	"github.com/harrisonzhao/supermeme/shared/imageutil"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"github.com/golang/glog"
-	"github.com/harrisonzhao/supermeme/models/join_models"
-	"github.com/harrisonzhao/supermeme/shared/db"
 	"github.com/harrisonzhao/supermeme/models"
+	"github.com/harrisonzhao/supermeme/models/join_models"
+	"github.com/harrisonzhao/supermeme/shared/constants"
+	"github.com/harrisonzhao/supermeme/shared/db"
+	"github.com/harrisonzhao/supermeme/shared/imageutil"
+	"github.com/maciekmm/messenger-platform-go-sdk"
+	"image"
+	"image/png"
+	"io/ioutil"
+	"net/http"
+	"os"
+	"strings"
+	"time"
 )
 
 const (
-	FbPageAccessToken   = ""
-	greetingText = "Either upload a photo or type something. We'll respond in memes that relate to your query."
-	responseText = "Here is the meme we think is most suitable. If you like it please give it a thumbs up."
+	greetingText     = "Either upload a photo or type something. We'll respond in memes that relate to your query."
+	responseText     = "Here is the meme we think most closely corresponds to your query."
+	followupText     = " If you would like to generate a meme using your image, tap \"create\""
+	createQuickReply = "create"
 )
 
+var validImageFormats = map[string]struct{}{
+	"jpeg": struct{}{},
+	"png":  struct{}{},
+}
+
 var mess = &messenger.Messenger{
-	AccessToken: FbPageAccessToken,
+	AccessToken: constants.FbPageAccessToken,
 }
 
 func InitMessenger() *messenger.Messenger {
@@ -33,19 +46,40 @@ func InitMessenger() *messenger.Messenger {
 }
 
 func messageReceived(event messenger.Event, opts messenger.MessageOpts, msg messenger.ReceivedMessage) {
+	senderId := opts.Sender.ID
+	var err error = nil
+	if msg.QuickReply != nil {
+		err = generateMeme(senderId, msg)
+	} else {
+		err = findBestMeme(opts.Sender.ID, msg)
+	}
+	if err != nil {
+		glog.Error(err, msg.Text, msg.QuickReply != nil)
+		mq := messenger.MessageQuery{}
+		mq.Text("We had a problem with our software! We could not complete your request.")
+		mess.SendMessage(mq)
+	}
+}
+
+type imageMetadata struct {
+	MemeId   int    `json:"memeId"`
+	ImageUrl string `json:"imageUrl"`
+}
+
+func findBestMeme(senderId string, msg messenger.ReceivedMessage) error {
 	queryWords := strings.Split(msg.Text, " ")
 	mq := messenger.MessageQuery{}
-	mq.RecipientID(opts.Sender.ID)
-	imageUrls := []string{}
+	mq.RecipientID(senderId)
+	imageUrl := ""
 	for _, attachment := range msg.Attachments {
 		if attachment.Type == messenger.AttachmentTypeImage {
-			imageUrl := string(attachment.Payload)
-			imageUrls = append(imageUrls, imageUrl)
+			imageUrl = attachment.Payload.(string)
 			caption, err := imageutil.CaptionUrl(imageUrl)
 			if err != nil {
-				glog.Error(err)
+				return err
 			}
 			queryWords = append(queryWords, strings.Split(caption, " ")...)
+			break
 		} else {
 			mq.Text(string(attachment.Type) + " is not supported.")
 			mess.SendMessage(mq)
@@ -54,33 +88,111 @@ func messageReceived(event messenger.Event, opts messenger.MessageOpts, msg mess
 	db := dbutil.DbContext()
 	bmr, err := joinmodels.BestMemeResultsByKeywords(db, queryWords)
 	if err != nil || bmr == nil {
-		mq.Text("We could not match your query to a suitable meme.")
-		mess.SendMessage(mq)
-		return
+		return errors.New("We could not match your query to a suitable meme.")
 	}
 	meme, err := models.MemeByID(db, bmr.ID)
 	if !meme.URL.Valid {
-		mq.Text("We could not fetch the meme in mind at this time.")
-		mess.SendMessage(mq)
-		return
+		return errors.New("We could not fetch the meme in mind at this time.")
 	}
-	mq.Text(responseText)
+	response := responseText
+	if len(imageUrl) != 0 {
+		response += followupText
+		metadata, err := json.Marshal(imageMetadata{
+			MemeId:   meme.ID,
+			ImageUrl: imageUrl,
+		})
+		if err != nil {
+			return err
+		}
+		mq.QuickReply(messenger.QuickReply{
+			Title:   createQuickReply,
+			Payload: string(metadata[:]),
+		})
+	}
+	mq.Text(response)
 	mq.Image(meme.URL.String)
-	mq.Metadata(strings.Join(imageUrls, ","))
-	mess.SendMessage(mq)
+	if _, err = mess.SendMessage(mq); err != nil {
+		return err
+	}
+	return nil
+}
+
+func generateMeme(senderId string, msg messenger.ReceivedMessage) error {
+	var metadata imageMetadata
+	mq := messenger.MessageQuery{}
+	if msg.QuickReply != nil {
+		err := json.Unmarshal([]byte(msg.QuickReply.Payload[:]), &metadata)
+		if err != nil {
+			return err
+		}
+	} else {
+		return errors.New("There is no quickreply payload")
+	}
+	db := dbutil.DbContext()
+	meme, err := models.MemeByID(db, metadata.MemeId)
+	if err != nil {
+		return err
+	}
+	resp, err := http.Get(metadata.ImageUrl)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	img, format, err := image.Decode(resp.Body)
+	if _, ok := validImageFormats[format]; !ok {
+		return errors.New(format + " is not a valid file format")
+	}
+	newMeme := imageutil.CreateMemeFromImage(*meme, img)
+	file, err := ioutil.TempFile(constants.PublicImageDir, "tempimg")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err = png.Encode(file, newMeme); err != nil {
+		return err
+	}
+	file.Sync()
+	mq.Image(strings.Join([]string{constants.Address, constants.PublicImageDir, file.Name()}, "/"))
+	msgResp, err := mess.SendMessage(mq)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	tmpFileInfo := models.TempFile{
+		MessageID:   msgResp.MessageID,
+		FileName:    file.Name(),
+		TimeCreated: &now,
+	}
+	if err = tmpFileInfo.Insert(db); err != nil {
+		return err
+	}
+	return nil
 }
 
 func messageDelivered(event messenger.Event, opts messenger.MessageOpts, delivery messenger.Delivery) {
-
+	db := dbutil.DbContext()
+	for _, messageId := range delivery.MessageIDS {
+		tmpFile, _ := models.TempFileByMessageID(db, messageId)
+		if tmpFile == nil {
+			continue
+		}
+		err := os.Remove(constants.PublicImageDir + "/" + tmpFile.FileName)
+		if err != nil {
+			glog.Error(err)
+		}
+	}
 }
 
 func messagePostback(messenger.Event, messenger.MessageOpts, messenger.Postback) {
 
 }
 
-func MessengerWebhook(c echo.Context) error {
-	if c.QueryParam("hub.verify_token") == utils.FbVerificationToken {
-		return c.String(http.StatusOK, c.QueryParam("hub.challenge"))
+func MessengerWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("hub.verify_token") == constants.FbVerificationToken {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, r.URL.Query().Get("hub.challenge"))
+		return
 	}
-	return c.String(http.StatusBadRequest, "Error, wrong validation token")
+	w.WriteHeader(http.StatusBadRequest)
+	fmt.Fprintf(w, "Error, wrong validation token")
 }

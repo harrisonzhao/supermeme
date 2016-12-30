@@ -2,13 +2,13 @@ package imageutil
 
 import (
 	"bytes"
-	"net/http"
-	"strings"
-	"io/ioutil"
 	"encoding/json"
-	"net/url"
 	"fmt"
 	"github.com/google/go-querystring/query"
+	"io/ioutil"
+	"net/http"
+	"net/url"
+	"strings"
 )
 
 const (
@@ -16,9 +16,9 @@ const (
 )
 
 type captionData struct {
-	UserMessage string `json:"userMessage"`
+	UserMessage    string `json:"userMessage"`
 	ConversationId string `json:"conversationId"`
-	Watermark string `json:"waterMark"`
+	Watermark      string `json:"waterMark"`
 }
 
 type captionResponse struct {
@@ -39,15 +39,15 @@ func CaptionUrl(imageUrl string) (s string, err error) {
 	conversationId := strings.Split(string(b[:]), "\"")[1]
 	cookie := strings.Split(resp.Header.Get("set-cookie"), ";")[0]
 	data := captionData{
-		UserMessage: imageUrl,
+		UserMessage:    imageUrl,
 		ConversationId: conversationId,
-		Watermark: "",
+		Watermark:      "",
 	}
 	dataJson, err := json.Marshal(data)
 	if err != nil {
 		return
 	}
-	req, err := http.NewRequest("POST", baseUrl + "message", bytes.NewBuffer(dataJson))
+	req, err := http.NewRequest("POST", baseUrl+"message", bytes.NewBuffer(dataJson))
 	if err != nil {
 		return
 	}
@@ -64,7 +64,7 @@ func CaptionUrl(imageUrl string) (s string, err error) {
 	if err != nil {
 		return
 	}
-	req, err = http.NewRequest("GET", baseUrl + "message?" + v.Encode(), nil)
+	req, err = http.NewRequest("GET", baseUrl+"message?"+v.Encode(), nil)
 	if err != nil {
 		return
 	}

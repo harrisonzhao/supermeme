@@ -1,9 +1,9 @@
 package imageutil
 
 import (
-	"io"
 	"image/jpeg"
 	"image/png"
+	"io"
 )
 
 // convertJPEGToPNG converts from JPEG to PNG.
