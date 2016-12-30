@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"github.com/gorilla/mux"
 	"github.com/harrisonzhao/supermeme/controllers"
 	"github.com/harrisonzhao/supermeme/shared/constants"
@@ -10,6 +11,7 @@ import (
 )
 
 func main() {
+	flag.Parse()
 	dbutil.InitDb(constants.DbName)
 	r := mux.NewRouter().StrictSlash(true)
 	r.HandleFunc("/webhook", controllers.InitMessenger().Handler).Methods("POST")

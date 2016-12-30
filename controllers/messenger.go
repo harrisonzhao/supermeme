@@ -25,11 +25,18 @@ const (
 	responseText     = "Here is the meme we think most closely corresponds to your query."
 	followupText     = " If you would like to generate a meme using your image, tap \"create\""
 	createQuickReply = "create"
+	noMatchError     = "We could not match your query to a suitable meme."
+	noMemeError      = "We could not fetch the meme in mind at this time."
 )
 
 var validImageFormats = map[string]struct{}{
-	"jpeg": struct{}{},
-	"png":  struct{}{},
+	"jpeg": {},
+	"png":  {},
+}
+
+var customErrors = map[string]struct{}{
+	noMatchError: {},
+	noMemeError:  {},
 }
 
 var mess = &messenger.Messenger{
@@ -57,7 +64,11 @@ func messageReceived(event messenger.Event, opts messenger.MessageOpts, msg mess
 		glog.Error(err, msg.Text, msg.QuickReply != nil)
 		mq := messenger.MessageQuery{}
 		mq.RecipientID(senderId)
-		mq.Text("We had a problem with our software! We could not complete your request.")
+		if _, ok := customErrors[err.Error()]; ok {
+			mq.Text(err.Error())
+		} else {
+			mq.Text("We had a problem with our software! We could not complete your request.")
+		}
 		mess.SendMessage(mq)
 	}
 }
@@ -74,7 +85,7 @@ func findBestMeme(senderId string, msg messenger.ReceivedMessage) error {
 	imageUrl := ""
 	for _, attachment := range msg.Attachments {
 		if attachment.Type == messenger.AttachmentTypeImage {
-			imageUrl = attachment.Payload.(string)
+			imageUrl = attachment.Payload.(*messenger.Resource).URL
 			caption, err := imageutil.CaptionUrl(imageUrl)
 			if err != nil {
 				return err
@@ -92,11 +103,11 @@ func findBestMeme(senderId string, msg messenger.ReceivedMessage) error {
 		return err
 	}
 	if bmr == nil {
-		return errors.New("We could not match your query to a suitable meme.")
+		return errors.New(noMatchError)
 	}
 	meme, err := models.MemeByID(db, bmr.ID)
 	if meme == nil || !meme.URL.Valid {
-		return errors.New("We could not fetch the meme in mind at this time.")
+		return errors.New(noMemeError)
 	}
 	response := responseText
 	if len(imageUrl) != 0 {
@@ -179,13 +190,15 @@ func generateMeme(senderId string, msg messenger.ReceivedMessage) error {
 func messageDelivered(event messenger.Event, opts messenger.MessageOpts, delivery messenger.Delivery) {
 	db := dbutil.DbContext()
 	for _, messageId := range delivery.MessageIDS {
-		tmpFile, _ := models.TempFileByMessageID(db, messageId)
-		if tmpFile == nil {
+		tmpFiles, _ := models.TempFilesByMessageID(db, messageId)
+		if len(tmpFiles) == 0 {
 			continue
 		}
-		err := os.Remove(constants.PublicImageDir + "/" + tmpFile.FileName)
-		if err != nil {
-			glog.Error(err)
+		for _, tmpFile := range tmpFiles {
+			err := os.Remove(tmpFile.FileName)
+			if err != nil {
+				glog.Error(err)
+			}
 		}
 	}
 }

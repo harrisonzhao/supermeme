@@ -10,6 +10,7 @@ import (
 
 // TempFile represents a row from 'alpha.temp_files'.
 type TempFile struct {
+	ID          int        `json:"id"`           // id
 	MessageID   string     `json:"message_id"`   // message_id
 	FileName    string     `json:"file_name"`    // file_name
 	TimeCreated *time.Time `json:"time_created"` // time_created
@@ -39,14 +40,14 @@ func (tf *TempFile) Insert(db XODB) error {
 
 	// sql query
 	const sqlstr = `INSERT INTO alpha.temp_files (` +
-		`file_name, time_created` +
+		`message_id, file_name, time_created` +
 		`) VALUES (` +
-		`?, ?` +
+		`?, ?, ?` +
 		`)`
 
 	// run query
-	XOLog(sqlstr, tf.FileName, tf.TimeCreated)
-	res, err := db.Exec(sqlstr, tf.FileName, tf.TimeCreated)
+	XOLog(sqlstr, tf.MessageID, tf.FileName, tf.TimeCreated)
+	res, err := db.Exec(sqlstr, tf.MessageID, tf.FileName, tf.TimeCreated)
 	if err != nil {
 		return err
 	}
@@ -58,7 +59,7 @@ func (tf *TempFile) Insert(db XODB) error {
 	}
 
 	// set primary key and existence
-	tf.MessageID = string(id)
+	tf.ID = int(id)
 	tf._exists = true
 
 	return nil
@@ -80,12 +81,12 @@ func (tf *TempFile) Update(db XODB) error {
 
 	// sql query
 	const sqlstr = `UPDATE alpha.temp_files SET ` +
-		`file_name = ?, time_created = ?` +
-		` WHERE message_id = ?`
+		`message_id = ?, file_name = ?, time_created = ?` +
+		` WHERE id = ?`
 
 	// run query
-	XOLog(sqlstr, tf.FileName, tf.TimeCreated, tf.MessageID)
-	_, err = db.Exec(sqlstr, tf.FileName, tf.TimeCreated, tf.MessageID)
+	XOLog(sqlstr, tf.MessageID, tf.FileName, tf.TimeCreated, tf.ID)
+	_, err = db.Exec(sqlstr, tf.MessageID, tf.FileName, tf.TimeCreated, tf.ID)
 	return err
 }
 
@@ -113,11 +114,11 @@ func (tf *TempFile) Delete(db XODB) error {
 	}
 
 	// sql query
-	const sqlstr = `DELETE FROM alpha.temp_files WHERE message_id = ?`
+	const sqlstr = `DELETE FROM alpha.temp_files WHERE id = ?`
 
 	// run query
-	XOLog(sqlstr, tf.MessageID)
-	_, err = db.Exec(sqlstr, tf.MessageID)
+	XOLog(sqlstr, tf.ID)
+	_, err = db.Exec(sqlstr, tf.ID)
 	if err != nil {
 		return err
 	}
@@ -128,25 +129,64 @@ func (tf *TempFile) Delete(db XODB) error {
 	return nil
 }
 
-// TempFileByMessageID retrieves a row from 'alpha.temp_files' as a TempFile.
+// TempFilesByMessageID retrieves a row from 'alpha.temp_files' as a TempFile.
 //
-// Generated from index 'temp_files_message_id_pkey'.
-func TempFileByMessageID(db XODB, messageID string) (*TempFile, error) {
+// Generated from index 'message_id_idx'.
+func TempFilesByMessageID(db XODB, messageID string) ([]*TempFile, error) {
 	var err error
 
 	// sql query
 	const sqlstr = `SELECT ` +
-		`message_id, file_name, time_created ` +
+		`id, message_id, file_name, time_created ` +
 		`FROM alpha.temp_files ` +
 		`WHERE message_id = ?`
 
 	// run query
 	XOLog(sqlstr, messageID)
+	q, err := db.Query(sqlstr, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer q.Close()
+
+	// load results
+	res := []*TempFile{}
+	for q.Next() {
+		tf := TempFile{
+			_exists: true,
+		}
+
+		// scan
+		err = q.Scan(&tf.ID, &tf.MessageID, &tf.FileName, &tf.TimeCreated)
+		if err != nil {
+			return nil, err
+		}
+
+		res = append(res, &tf)
+	}
+
+	return res, nil
+}
+
+// TempFileByID retrieves a row from 'alpha.temp_files' as a TempFile.
+//
+// Generated from index 'temp_files_id_pkey'.
+func TempFileByID(db XODB, id int) (*TempFile, error) {
+	var err error
+
+	// sql query
+	const sqlstr = `SELECT ` +
+		`id, message_id, file_name, time_created ` +
+		`FROM alpha.temp_files ` +
+		`WHERE id = ?`
+
+	// run query
+	XOLog(sqlstr, id)
 	tf := TempFile{
 		_exists: true,
 	}
 
-	err = db.QueryRow(sqlstr, messageID).Scan(&tf.MessageID, &tf.FileName, &tf.TimeCreated)
+	err = db.QueryRow(sqlstr, id).Scan(&tf.ID, &tf.MessageID, &tf.FileName, &tf.TimeCreated)
 	if err != nil {
 		return nil, err
 	}

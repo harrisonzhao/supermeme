@@ -38,8 +38,10 @@ CREATE TABLE IF NOT EXISTS system_metadata (
 );
 
 CREATE TABLE IF NOT EXISTS temp_files (
+  id INT NOT NULL AUTO_INCREMENT,
   message_id VARCHAR(128) NOT NULL,
   file_name VARCHAR(50) NOT NULL,
   time_created TIMESTAMP NOT NULL,
-  PRIMARY KEY ( message_id )
+  PRIMARY KEY ( id ),
+  INDEX message_id_idx (message_id)
 );
