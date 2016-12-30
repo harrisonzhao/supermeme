@@ -170,7 +170,7 @@ func generateMeme(senderId string, msg messenger.ReceivedMessage) error {
 		return err
 	}
 	file.Sync()
-	mq.Image(strings.Join([]string{constants.Address, constants.PublicImageDir, file.Name()}, "/"))
+	mq.Image(constants.Address + "/" + file.Name())
 	msgResp, err := mess.SendMessage(mq)
 	if err != nil {
 		return err
