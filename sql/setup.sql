@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS meme_keyword (
 	keyword VARCHAR(50) NOT NULL,
 	word_type ENUM('NONE', 'CAPTION', 'MEME_TEXT', 'SPELLCHECK') NOT NULL DEFAULT 'NONE',
 	weight INT NOT NULL DEFAULT 1,
-	PRIMARY KEY (meme_id, keyword),
+	PRIMARY KEY (meme_id, keyword, word_type),
 	INDEX keyword_idx (keyword),
 	FOREIGN KEY (meme_id) REFERENCES meme(id)
 );

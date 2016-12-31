@@ -37,14 +37,14 @@ func (mk *MemeKeyword) Insert(db XODB) error {
 
 	// sql query
 	const sqlstr = `INSERT INTO alpha.meme_keyword (` +
-		`meme_id, word_type, weight` +
+		`meme_id, keyword, weight` +
 		`) VALUES (` +
 		`?, ?, ?` +
 		`)`
 
 	// run query
-	XOLog(sqlstr, mk.MemeID, mk.WordType, mk.Weight)
-	res, err := db.Exec(sqlstr, mk.MemeID, mk.WordType, mk.Weight)
+	XOLog(sqlstr, mk.MemeID, mk.Keyword, mk.Weight)
+	res, err := db.Exec(sqlstr, mk.MemeID, mk.Keyword, mk.Weight)
 	if err != nil {
 		return err
 	}
@@ -56,7 +56,7 @@ func (mk *MemeKeyword) Insert(db XODB) error {
 	}
 
 	// set primary key and existence
-	mk.Keyword = string(id)
+	mk.WordType = WordType(id)
 	mk._exists = true
 
 	return nil
@@ -78,12 +78,12 @@ func (mk *MemeKeyword) Update(db XODB) error {
 
 	// sql query
 	const sqlstr = `UPDATE alpha.meme_keyword SET ` +
-		`meme_id = ?, word_type = ?, weight = ?` +
-		` WHERE keyword = ?`
+		`meme_id = ?, keyword = ?, weight = ?` +
+		` WHERE word_type = ?`
 
 	// run query
-	XOLog(sqlstr, mk.MemeID, mk.WordType, mk.Weight, mk.Keyword)
-	_, err = db.Exec(sqlstr, mk.MemeID, mk.WordType, mk.Weight, mk.Keyword)
+	XOLog(sqlstr, mk.MemeID, mk.Keyword, mk.Weight, mk.WordType)
+	_, err = db.Exec(sqlstr, mk.MemeID, mk.Keyword, mk.Weight, mk.WordType)
 	return err
 }
 
@@ -111,11 +111,11 @@ func (mk *MemeKeyword) Delete(db XODB) error {
 	}
 
 	// sql query
-	const sqlstr = `DELETE FROM alpha.meme_keyword WHERE keyword = ?`
+	const sqlstr = `DELETE FROM alpha.meme_keyword WHERE word_type = ?`
 
 	// run query
-	XOLog(sqlstr, mk.Keyword)
-	_, err = db.Exec(sqlstr, mk.Keyword)
+	XOLog(sqlstr, mk.WordType)
+	_, err = db.Exec(sqlstr, mk.WordType)
 	if err != nil {
 		return err
 	}
@@ -172,25 +172,25 @@ func MemeKeywordsByKeyword(db XODB, keyword string) ([]*MemeKeyword, error) {
 	return res, nil
 }
 
-// MemeKeywordByKeyword retrieves a row from 'alpha.meme_keyword' as a MemeKeyword.
+// MemeKeywordByWordType retrieves a row from 'alpha.meme_keyword' as a MemeKeyword.
 //
-// Generated from index 'meme_keyword_keyword_pkey'.
-func MemeKeywordByKeyword(db XODB, keyword string) (*MemeKeyword, error) {
+// Generated from index 'meme_keyword_word_type_pkey'.
+func MemeKeywordByWordType(db XODB, wordType WordType) (*MemeKeyword, error) {
 	var err error
 
 	// sql query
 	const sqlstr = `SELECT ` +
 		`meme_id, keyword, word_type, weight ` +
 		`FROM alpha.meme_keyword ` +
-		`WHERE keyword = ?`
+		`WHERE word_type = ?`
 
 	// run query
-	XOLog(sqlstr, keyword)
+	XOLog(sqlstr, wordType)
 	mk := MemeKeyword{
 		_exists: true,
 	}
 
-	err = db.QueryRow(sqlstr, keyword).Scan(&mk.MemeID, &mk.Keyword, &mk.WordType, &mk.Weight)
+	err = db.QueryRow(sqlstr, wordType).Scan(&mk.MemeID, &mk.Keyword, &mk.WordType, &mk.Weight)
 	if err != nil {
 		return nil, err
 	}
