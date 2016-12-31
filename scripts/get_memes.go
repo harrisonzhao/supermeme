@@ -16,38 +16,55 @@ import (
   "github.com/Masterminds/squirrel"
 )
 
-// Request statics
-const (
-  // Query parameters
-  page_start = 1 // Will query memes from, and including, this page
-  page_end = 2 // Will query memes up to, but not including, this page
-  insert_limit = 1 // Will insert the first insert_limit memes into the database
+// Script parameters (Change ONLY these!)
+var page_mode = true // True: Load memes by page, False: Load individual memes
 
-  // URL parameters
+var page_start = 1 // Will load memes from, and including, this page
+var page_end = 5 // Will load memes up to, but not including, this page
+var insert_limit = 100 // Will insert the first insert_limit memes with all fields from each page into the database
+
+var meme_id_list = []int{} // Will load memes whose ids are in this list
+
+// Final statics
+const (
+  // Request parameters
   client_id = "f1d6c6bea6968c6"
   client_secret = "70366d1e06a6fb2e634d33cb3bfd90fe42d4e1af"
 
-  // URL statics
-  meme_url = "https://api.imgur.com/3/gallery/t/memes/time"
+  // URL
+  page_url = "https://api.imgur.com/3/gallery/t/memes/time"
+  id_url = "https://api.imgur.com/3/gallery/t/memes"
 )
 
+// Regexp
 var regNonLetters, _ = regexp.Compile("[^A-Za-z0-9 ]+")
 var regStopWords, _ = regexp.Compile(
-  "^(i|am|im|not|really|confident|but|i|think|it|is|its|a|in|on|and|of|the|he|seems)$")
+  "^(i|am|im|not|really|confident|but|i|think|it|is|its|a|in|on|and|of|the|he|seems|to|next)$")
 
-type Tag struct {
+// Non-final statics
+var db models.XODB
+var imgurClient *imgur.Client
+
+// Tag struct to help in parsing image tag api call responses
+type tag struct {
   TotalItems int                       `json:"total_items"`
   Items      []imgur.GalleryImageAlbum `json:"items"`
 }
 
-type TagResult struct {
-  Data    Tag
+type tagResult struct {
+  Data    tag
+  Status  int
+  Success bool
+}
+
+type galleryImageAlbumResult struct {
+  Data    imgur.GalleryImageAlbum
   Status  int
   Success bool
 }
 
 // Fields in this struct should mirror the columns in the Memes table
-type MemeRow struct {
+type memeRow struct {
   ID           int
   Source       models.Source
   URL          string
@@ -57,6 +74,14 @@ type MemeRow struct {
   Views        int
   Keywords     []string
 }
+
+/*
+ * TODO: REFACTOR REDUNDANT CODE!
+ * TODO: REFACTOR REDUNDANT CODE!
+ * TODO: REFACTOR REDUNDANT CODE!
+ * TODO: REFACTOR REDUNDANT CODE!
+ * TODO: REFACTOR REDUNDANT CODE!
+ */
 
 // Helper functions to convert normal types into sql types
 func stringToNullString(s string) (sql.NullString) {
@@ -81,63 +106,87 @@ func nullInt64ToInt(ni sql.NullInt64) (int) {
   return int(ni.Int64)
 }
 
-// Get memes on a certain page
-func getMemes(client *imgur.Client, page int) ([]MemeRow, error) {
+// Get imgur.GalleryImageAlbums tagged as memes on a certain page
+func getImagesOrAlbumsOnPage(page int) ([]imgur.GalleryImageAlbum, error) {
   // Create request url
-  url := meme_url + "/" + fmt.Sprintf("%d", page)
+  url := page_url + "/" + fmt.Sprintf("%d", page)
   
   // Create request
-  req, err := client.NewRequest("GET", url, nil)
+  req, err := imgurClient.NewRequest("GET", url, nil)
   if err != nil {
     return nil, err
   }
 
   // Execute request
-  response := &TagResult{} // Response will hold the actual response json
-  _, err = client.Do(req, response)
+  response := &tagResult{} // Response will hold the actual response json
+  _, err = imgurClient.Do(req, response)
   if err != nil {
     return nil, err
   }
   //fmt.Println(url, resp, response)
-
-  // Process images and albums
-  imagesOrAlbums := response.Data.Items
-  var memes []MemeRow
-  for _, imageOrAlbum := range imagesOrAlbums {
-    if imageOrAlbum.IsAlbum {
-      // album is imgur.GalleryImageAlbum, image is imgur.Image
-      album := imageOrAlbum
-      for _, image := range album.Images {
-        meme := MemeRow{}
-        meme.Source = models.SourceImgur
-        meme.URL = image.Link
-        meme.NetUps = album.Ups - album.Downs
-        meme.Views = image.Views
-
-        memes = append(memes, meme)
-      }
-    } else {
-      // image is imgur.GalleryImageAlbum
-      image := imageOrAlbum
-      
-      meme := MemeRow{}
-      meme.Source = models.SourceImgur
-      meme.URL = image.Link
-      meme.NetUps = image.Ups - image.Downs
-      meme.Views = image.Views
-
-      memes = append(memes, meme)
-    }
-  }
-
-  return memes, nil
+  return response.Data.Items, nil
 }
 
-// Get all memes on the desired range of pages
-// The MemeRows returned will have Source, URL, NetUps, Views set
-func getAllMemes() ([]MemeRow) {
+// Get all imgur.GalleryImageAlbums with given ids
+func getImagesOrAlbumsWithIds() ([]imgur.GalleryImageAlbum, error) {
+  // Get all the urls for the memes with given ids
+  ids := make([]interface{}, len(meme_id_list))
+  for i, id := range meme_id_list {
+    ids[i] = id
+  }
+  sql, args, err := squirrel.
+    Select("id", "url").
+    From("alpha.meme").
+    Where("id IN (" + squirrel.Placeholders(len(ids)) + ")", ids...).
+    ToSql()
+  if (err != nil) {
+    return nil, err
+  }
+  fmt.Println(sql, args)
+  rows, err := db.Query(sql, args...)
+  if (err != nil) {
+    return nil, err
+  }
+
+  idTemp := new(int)
+  urlTemp := new(string)
+  idToUrlMap := make(map[int]string)
+  for rows.Next() {
+    err = rows.Scan(idTemp, urlTemp)
+    idToUrlMap[*idTemp] = (*urlTemp)[19:26] // TODO: Hacky way to get imgur ID, just save it in the database, perhaps?
+  }
+
+  // Get the imgur.GalleryImageAlbum for each url
+  var imagesOrAlbums []imgur.GalleryImageAlbum
+
+  for _, id := range meme_id_list {
+    // Create request url
+    url := id_url + "/" + idToUrlMap[id]
+    
+    // Create request
+    req, err := imgurClient.NewRequest("GET", url, nil)
+    if err != nil {
+      return nil, err
+    }
+
+    // Execute request
+    response := &galleryImageAlbumResult{} // Response will hold the actual response json
+    _, err = imgurClient.Do(req, response)
+    if err != nil {
+      return nil, err
+    }
+    //fmt.Println(url, resp, response)
+    imagesOrAlbums = append(imagesOrAlbums, response.Data)
+  }
+
+  return imagesOrAlbums, nil
+}
+
+/*// Get all memes on the desired range of pages
+// The memeRows returned will have Source, URL, NetUps, Views set
+func getAllMemes() ([]memeRow) {
   httpClient := http.DefaultClient
-  var memes []MemeRow
+  var memes []memeRow
 
   for page := page_start; page < page_end; page++ {
     imgurClient := imgur.NewClient(httpClient, client_id, client_secret)
@@ -150,32 +199,64 @@ func getAllMemes() ([]MemeRow) {
   }
 
   return memes
-}
+}*/
 
-// Populate the text fields for the memes passed in
-// The MemeRow returned will have BottomText, TopText, Keywords set
+// Convert the given imgur.GalleryImageAlbums into memeRows
+// The memeRow returned will have Source, URL, NetUps, Views, BottomText, TopText, Keywords set
 // If BottomText, TopText, Keywords cannot be processed, then the meme will be dropped from the returned value
-func populateTextForMemes(rawMemes []MemeRow) ([]MemeRow) {
-  var memes []MemeRow
+func convertImagesOrAlbumsToMemes(imagesOrAlbums []imgur.GalleryImageAlbum) ([]memeRow) {
+  // Process images and albums
+  var rawMemes []memeRow
+
+  for _, imageOrAlbum := range imagesOrAlbums {
+    if imageOrAlbum.IsAlbum {
+      // album is imgur.GalleryImageAlbum, image is imgur.Image
+      album := imageOrAlbum
+      for _, image := range album.Images {
+        meme := memeRow{}
+        meme.Source = models.SourceImgur
+        meme.URL = image.Link
+        meme.NetUps = album.Ups - album.Downs
+        meme.Views = image.Views
+
+        rawMemes = append(rawMemes, meme)
+      }
+    } else {
+      // image is imgur.GalleryImageAlbum
+      image := imageOrAlbum
+      
+      meme := memeRow{}
+      meme.Source = models.SourceImgur
+      meme.URL = image.Link
+      meme.NetUps = image.Ups - image.Downs
+      meme.Views = image.Views
+
+      rawMemes = append(rawMemes, meme)
+    }
+  }
+
+  // Add in the remaining fields for memes
+  var memes []memeRow
+
   for _, meme := range rawMemes {
     if (len(memes) < insert_limit) {
       // Get BottomText and TopText fields
       resp, err := http.Get(meme.URL)
       if err != nil {
-        glog.Error(fmt.Sprintf("Could not get text for image: %s", meme.URL), err)
+        glog.Info(fmt.Sprintf("Unable to get text for image: %s", meme.URL), err)
         continue
       }
       
       defer resp.Body.Close()
       img, format, err := image.Decode(resp.Body)
       if (err != nil) || (format != "png") {
-        glog.Error(fmt.Sprintf("Could not get text for image: %s", meme.URL), err)
+        glog.Info(fmt.Sprintf("Unable to get text for image: %s", meme.URL), err)
         continue
       }
 
       topText, bottomText, err := imageutil.GetTextFromMeme(img)
       if err != nil {
-        glog.Error(fmt.Sprintf("Could not get text for image: %s", meme.URL), err)
+        glog.Info(fmt.Sprintf("Unable to get text for image: %s", meme.URL), err)
         continue
       }
       //fmt.Println(nullStringToString(meme.URL), topText, bottomText)
@@ -185,7 +266,7 @@ func populateTextForMemes(rawMemes []MemeRow) ([]MemeRow) {
       // Get Keywords field
       rawCaption, err := imageutil.CaptionUrl(meme.URL)
       if (err != nil) {
-        glog.Error(fmt.Sprintf("Could not retrieve caption for image: %s", meme.URL), err)
+        glog.Info(fmt.Sprintf("Unable to retrieve caption for image: %s", meme.URL), err)
         continue
       }
       //fmt.Println(meme.URL, meme.NetUps, meme.Views, caption)
@@ -213,7 +294,7 @@ func populateTextForMemes(rawMemes []MemeRow) ([]MemeRow) {
 }
 
 // Get all the memes that are already in the database
-func divideIntoOldAndNewMemes(db models.XODB, memes []MemeRow) ([]MemeRow, []MemeRow, error) {
+func divideIntoOldAndNewMemes(memes []memeRow) ([]memeRow, []memeRow, error) {
   // Query for existing memes based on url
   urls := make([]interface{}, len(memes))
   for i, meme := range memes {
@@ -241,8 +322,8 @@ func divideIntoOldAndNewMemes(db models.XODB, memes []MemeRow) ([]MemeRow, []Mem
   }
 
   // Divide up memes into old memes and new memes
-  var oldMemes []MemeRow
-  var newMemes []MemeRow
+  var oldMemes []memeRow
+  var newMemes []memeRow
   for _, meme := range memes {
     id, exists := urlToIdMap[meme.URL]
     if (exists) {
@@ -256,7 +337,7 @@ func divideIntoOldAndNewMemes(db models.XODB, memes []MemeRow) ([]MemeRow, []Mem
   return oldMemes, newMemes, nil
 }
 
-func updateMemes(db models.XODB, memes []MemeRow) (error) {
+func updateMemes(memes []memeRow) (error) {
   // TODO: Modify so we don't delete all keywords every time
   // Delete meme keywords
   ids := make([]interface{}, len(memes))
@@ -298,7 +379,6 @@ func updateMemes(db models.XODB, memes []MemeRow) (error) {
     }
   }
   sql = sql + " ON DUPLICATE KEY UPDATE net_ups = VALUES(net_ups), views = VALUES(views), num_keywords = VALUES(num_keywords)"
-
   fmt.Println(sql, memeRowValues)
   _, err = db.Exec(sql, memeRowValues...)
   if (err != nil) {
@@ -311,7 +391,7 @@ func updateMemes(db models.XODB, memes []MemeRow) (error) {
     totalKeywords = totalKeywords + len(meme.Keywords)
   }
   if totalKeywords <= 0 {
-    glog.Infoln("No keywords associated to old memes")
+    glog.Info("No keywords associated to old memes")
     return nil
   }
 
@@ -344,7 +424,7 @@ func updateMemes(db models.XODB, memes []MemeRow) (error) {
   return nil
 }
 
-func insertMemes(db models.XODB, memes [] MemeRow) (error) {
+func insertMemes(memes [] memeRow) (error) {
   // Insert memes
   memeRowValues := make([][]interface{}, len(memes))
   for i, meme := range memes {
@@ -381,7 +461,7 @@ func insertMemes(db models.XODB, memes [] MemeRow) (error) {
     totalKeywords = totalKeywords + len(meme.Keywords)
   }
   if totalKeywords <= 0 {
-    glog.Infoln("No keywords associated to new memes")
+    glog.Info("No keywords associated to new memes")
     return nil
   }
 
@@ -398,6 +478,7 @@ func insertMemes(db models.XODB, memes [] MemeRow) (error) {
   if (err != nil) {
     return err
   }
+  fmt.Println(sql, args)
   rows, err := db.Query(sql, args...)
   if (err != nil) {
     return err
@@ -440,37 +521,96 @@ func insertMemes(db models.XODB, memes [] MemeRow) (error) {
   return nil
 }
 
-func main() {
-  dbutil.InitDb("alpha")
-  db := dbutil.DbContext()
+func loadImagesOrAlbums(imagesOrAlbums []imgur.GalleryImageAlbum) (error) {
+  // Convert the imgur.GalleryImageAlbums into memeRows
+  //fmt.Println(0)
 
-  rawMemes := getAllMemes()
-  memes := populateTextForMemes(rawMemes)
+  memes := convertImagesOrAlbumsToMemes(imagesOrAlbums)
   if (len(memes) == 0) {
-    return
+    return nil
   }
 
-  //fmt.Println(memes)
+  //fmt.Println(1)
 
-  oldMemes, newMemes, err := divideIntoOldAndNewMemes(db, memes)
+  // Decide which memes are old and which are new
+  oldMemes, newMemes, err := divideIntoOldAndNewMemes(memes)
   if (err != nil) {
-    glog.Fatal("Could not divide memes into old and new memes", err)
+    return err
   }
 
   fmt.Println(oldMemes)
   fmt.Println(newMemes)
 
+  // Upload the meme data into the database
   if (len(oldMemes) > 0) {
-    err = updateMemes(db, oldMemes)
+    err = updateMemes(oldMemes)
     if (err != nil) {
-      glog.Fatal("Could not update old memes in the database", err)
+      return err
     }
   }
 
   if (len(newMemes) > 0) {
-    err = insertMemes(db, newMemes)
+    err = insertMemes(newMemes)
     if (err != nil) {
-      glog.Fatal("Could not insert new memes into database", err)
+      return err
+    }
+  }
+
+  return nil
+}
+
+func loadMemesForPage(page int) (error) {
+  // Get all imgur.GalleryImageAlbums tagged as memes on page
+  imagesOrAlbums, err := getImagesOrAlbumsOnPage(page)
+  if (err != nil) {
+    return err
+  }
+  // Convert and load all imgur.GalleryImageAlbums
+  err = loadImagesOrAlbums(imagesOrAlbums)
+  if (err != nil) {
+    return err
+  }
+  return nil
+}
+
+func loadMemesWithIds() (error) {
+  // Get all imgur.GalleryImageAlbums with given ids
+  imagesOrAlbums, err := getImagesOrAlbumsWithIds()
+  if (err != nil) {
+    return err
+  }
+  // Convert and load all imgur.GalleryImageAlbums
+  // TODO: All memes passed through here exist in the database, so the later sql call to get meme_ids is redundant. Fix.
+  err = loadImagesOrAlbums(imagesOrAlbums)
+  if (err != nil) {
+    return err
+  }
+  return nil
+}
+
+func main() {
+  // Initialize database context and imgur client
+  dbutil.InitDb("alpha")
+  db = dbutil.DbContext()
+  imgurClient = imgur.NewClient(http.DefaultClient, client_id, client_secret)
+
+  if (page_mode) {
+    // Upsert memes for each page in range
+    for page := page_start; page < page_end; page++ {
+      err := loadMemesForPage(page);
+      if (err != nil) {
+        glog.Error(fmt.Sprintf("Unable to upsert memes into database for page: %d", page), err)
+      } else {
+        glog.Info(fmt.Sprintf("Successfully upserted memes into database for page: %d", page))
+      }
+    }
+  } else {
+    // Upsert all memes with given ids
+    err := loadMemesWithIds();
+    if (err != nil) {
+      glog.Error("Unable to upsert all memes into database with given ids", err)
+    } else {
+      glog.Info("Successfully upserted all memes into database with given ids")
     }
   }
 }
