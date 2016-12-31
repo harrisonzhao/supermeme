@@ -19,11 +19,12 @@ import (
 // Script parameters (Change ONLY these!)
 var page_mode = true // True: Load memes by page, False: Load individual memes
 
-var page_start = 1 // Will load memes from, and including, this page
+var page_start = 0 // Will load memes from, and including, this page
 var page_end = 5 // Will load memes up to, but not including, this page
 var insert_limit = 100 // Will insert the first insert_limit memes with all fields from each page into the database
 
-var meme_id_list = []int{} // Will load memes whose ids are in this list
+var meme_id_list = []int{131} // Will load memes whose ids are in this list
+//87,113,114,115,137,162,185,245,258,259,264,273
 
 // Final statics
 const (
@@ -37,9 +38,11 @@ const (
 )
 
 // Regexp
+var regBackslashN, _ = regexp.Compile("\\\\n")
 var regNonLetters, _ = regexp.Compile("[^A-Za-z0-9 ]+")
 var regStopWords, _ = regexp.Compile(
-  "^(i|am|im|not|really|confident|but|i|think|it|is|its|a|in|on|and|of|the|he|seems|to|next)$")
+  "^(i|am|im|not|really|confident|but|i|think|it|is|its|a|in|on|and|of|the|he|him|she|her|heshe|" +
+  "seem|seems|to|next|are|at|for|et|al|an|that|thats|they|with|sure|some|sort)$")
 
 // Non-final statics
 var db models.XODB
@@ -255,7 +258,7 @@ func convertImagesOrAlbumsToMemes(imagesOrAlbums []imgur.GalleryImageAlbum) ([]m
       }
 
       topText, bottomText, err := imageutil.GetTextFromMeme(img)
-      if err != nil {
+      if (err != nil) || (topText == "" && bottomText == "") {
         glog.Info(fmt.Sprintf("Unable to get text for image: %s", meme.URL), err)
         continue
       }
@@ -269,14 +272,16 @@ func convertImagesOrAlbumsToMemes(imagesOrAlbums []imgur.GalleryImageAlbum) ([]m
         glog.Info(fmt.Sprintf("Unable to retrieve caption for image: %s", meme.URL), err)
         continue
       }
+      //fmt.Println(rawCaption)
       //fmt.Println(meme.URL, meme.NetUps, meme.Views, caption)
       
+      rawCaption = regBackslashN.ReplaceAllString(rawCaption, " ")
       caption := regNonLetters.ReplaceAllString(rawCaption, "")
       rawCaptionWords := strings.Split(caption, " ")
       keywordSet := make(map[string]bool)
       for _, rawCaptionWord := range rawCaptionWords {
         captionWord := strings.ToLower(rawCaptionWord)
-        if (!regStopWords.MatchString(captionWord)) {
+        if (captionWord != "") && !regStopWords.MatchString(captionWord) {
           keywordSet[captionWord] = true
         }
       }
