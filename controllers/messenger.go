@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"regexp"
 )
 
 const (
@@ -28,6 +29,8 @@ const (
 	noMatchError     = "We could not match your query to a suitable meme."
 	noMemeError      = "We could not fetch the meme in mind at this time."
 )
+
+var punctuationRegex = regexp.MustCompile("[^\\w\\s]")
 
 var validImageFormats = map[string]struct{}{
 	"jpeg": {},
@@ -79,7 +82,7 @@ type imageMetadata struct {
 }
 
 func findBestMeme(senderId string, msg messenger.ReceivedMessage) error {
-	queryWords := strings.Split(msg.Text, " ")
+	queryWords := strings.Split(strings.ToLower(punctuationRegex.ReplaceAllString(msg.Text, "")), " ")
 	mq := messenger.MessageQuery{}
 	mq.RecipientID(senderId)
 	imageUrl := ""

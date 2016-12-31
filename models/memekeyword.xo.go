@@ -7,8 +7,10 @@ import "errors"
 
 // MemeKeyword represents a row from 'alpha.meme_keyword'.
 type MemeKeyword struct {
-	MemeID  int    `json:"meme_id"` // meme_id
-	Keyword string `json:"keyword"` // keyword
+	MemeID   int      `json:"meme_id"`   // meme_id
+	Keyword  string   `json:"keyword"`   // keyword
+	WordType WordType `json:"word_type"` // word_type
+	Weight   int      `json:"weight"`    // weight
 
 	// xo fields
 	_exists, _deleted bool
@@ -35,14 +37,14 @@ func (mk *MemeKeyword) Insert(db XODB) error {
 
 	// sql query
 	const sqlstr = `INSERT INTO alpha.meme_keyword (` +
-		`meme_id` +
+		`meme_id, word_type, weight` +
 		`) VALUES (` +
-		`?` +
+		`?, ?, ?` +
 		`)`
 
 	// run query
-	XOLog(sqlstr, mk.MemeID)
-	res, err := db.Exec(sqlstr, mk.MemeID)
+	XOLog(sqlstr, mk.MemeID, mk.WordType, mk.Weight)
+	res, err := db.Exec(sqlstr, mk.MemeID, mk.WordType, mk.Weight)
 	if err != nil {
 		return err
 	}
@@ -76,12 +78,12 @@ func (mk *MemeKeyword) Update(db XODB) error {
 
 	// sql query
 	const sqlstr = `UPDATE alpha.meme_keyword SET ` +
-		`meme_id = ?` +
+		`meme_id = ?, word_type = ?, weight = ?` +
 		` WHERE keyword = ?`
 
 	// run query
-	XOLog(sqlstr, mk.MemeID, mk.Keyword)
-	_, err = db.Exec(sqlstr, mk.MemeID, mk.Keyword)
+	XOLog(sqlstr, mk.MemeID, mk.WordType, mk.Weight, mk.Keyword)
+	_, err = db.Exec(sqlstr, mk.MemeID, mk.WordType, mk.Weight, mk.Keyword)
 	return err
 }
 
@@ -139,7 +141,7 @@ func MemeKeywordsByKeyword(db XODB, keyword string) ([]*MemeKeyword, error) {
 
 	// sql query
 	const sqlstr = `SELECT ` +
-		`meme_id, keyword ` +
+		`meme_id, keyword, word_type, weight ` +
 		`FROM alpha.meme_keyword ` +
 		`WHERE keyword = ?`
 
@@ -159,7 +161,7 @@ func MemeKeywordsByKeyword(db XODB, keyword string) ([]*MemeKeyword, error) {
 		}
 
 		// scan
-		err = q.Scan(&mk.MemeID, &mk.Keyword)
+		err = q.Scan(&mk.MemeID, &mk.Keyword, &mk.WordType, &mk.Weight)
 		if err != nil {
 			return nil, err
 		}
@@ -178,7 +180,7 @@ func MemeKeywordByKeyword(db XODB, keyword string) (*MemeKeyword, error) {
 
 	// sql query
 	const sqlstr = `SELECT ` +
-		`meme_id, keyword ` +
+		`meme_id, keyword, word_type, weight ` +
 		`FROM alpha.meme_keyword ` +
 		`WHERE keyword = ?`
 
@@ -188,7 +190,7 @@ func MemeKeywordByKeyword(db XODB, keyword string) (*MemeKeyword, error) {
 		_exists: true,
 	}
 
-	err = db.QueryRow(sqlstr, keyword).Scan(&mk.MemeID, &mk.Keyword)
+	err = db.QueryRow(sqlstr, keyword).Scan(&mk.MemeID, &mk.Keyword, &mk.WordType, &mk.Weight)
 	if err != nil {
 		return nil, err
 	}
