@@ -8,8 +8,7 @@ import (
   "strings"
   "../shared/db"
   "../shared/imageutil"
-  "database/sql"
-  "github.com/harrisonzhao/supermeme/models"
+  "github.com/harrisonzhao/superanswer/models"
   "github.com/golang/glog"
   "image"
   _ "image/png"
@@ -19,11 +18,11 @@ import (
 // Script parameters (Change ONLY these!)
 var page_mode = true // True: Load memes by page, False: Load individual memes
 
-var page_start = 0 // Will load memes from, and including, this page
-var page_end = 5 // Will load memes up to, but not including, this page
+var page_start = 20 // Will load memes from, and including, this page
+var page_end = 40 // Will load memes up to, but not including, this page
 var insert_limit = 100 // Will insert the first insert_limit memes with all fields from each page into the database
 
-var meme_id_list = []int{131} // Will load memes whose ids are in this list
+var meme_id_list = []int{45} // Will load memes whose ids are in this list
 //87,113,114,115,137,162,185,245,258,259,264,273
 
 // Final statics
@@ -38,11 +37,13 @@ const (
 )
 
 // Regexp
+var regNewline, _ = regexp.Compile("\\n")
 var regBackslashN, _ = regexp.Compile("\\\\n")
 var regNonLetters, _ = regexp.Compile("[^A-Za-z0-9 ]+")
 var regStopWords, _ = regexp.Compile(
   "^(i|am|im|not|really|confident|but|i|think|it|is|its|a|in|on|and|of|the|he|him|she|her|heshe|" +
-  "seem|seems|to|next|are|at|for|et|al|an|that|thats|they|with|sure|some|sort)$")
+  "seem|seems|to|next|are|at|for|et|al|an|that|thats|they|with|sure|some|sort|you|your|did|should|" +
+  "things|be|every|how|if|thatd|their|theyre|would|then)$")
 
 // Non-final statics
 var db models.XODB
@@ -67,6 +68,13 @@ type galleryImageAlbumResult struct {
 }
 
 // Fields in this struct should mirror the columns in the Memes table
+type memeKeywordRow struct {
+  MemeID   int
+  Keyword  string
+  WordType models.WordType
+  Weight   int
+}
+
 type memeRow struct {
   ID           int
   Source       models.Source
@@ -75,7 +83,7 @@ type memeRow struct {
   BottomText   string
   NetUps       int
   Views        int
-  Keywords     []string
+  Keywords     []memeKeywordRow
 }
 
 /*
@@ -85,29 +93,6 @@ type memeRow struct {
  * TODO: REFACTOR REDUNDANT CODE!
  * TODO: REFACTOR REDUNDANT CODE!
  */
-
-// Helper functions to convert normal types into sql types
-func stringToNullString(s string) (sql.NullString) {
-  return sql.NullString{String : s, Valid : s != ""}
-}
-
-func intToNullInt64(i int) (sql.NullInt64) {
-  return sql.NullInt64{Int64 : int64(i), Valid : true}
-}
-
-func nullStringToString(ns sql.NullString) (string) {
-  if (!ns.Valid) {
-    return ""
-  }
-  return ns.String
-}
-
-func nullInt64ToInt(ni sql.NullInt64) (int) {
-  if (!ni.Valid) {
-    return 0
-  }
-  return int(ni.Int64)
-}
 
 // Get imgur.GalleryImageAlbums tagged as memes on a certain page
 func getImagesOrAlbumsOnPage(page int) ([]imgur.GalleryImageAlbum, error) {
@@ -185,24 +170,29 @@ func getImagesOrAlbumsWithIds() ([]imgur.GalleryImageAlbum, error) {
   return imagesOrAlbums, nil
 }
 
-/*// Get all memes on the desired range of pages
-// The memeRows returned will have Source, URL, NetUps, Views set
-func getAllMemes() ([]memeRow) {
-  httpClient := http.DefaultClient
-  var memes []memeRow
-
-  for page := page_start; page < page_end; page++ {
-    imgurClient := imgur.NewClient(httpClient, client_id, client_secret)
-    pageMemes, err := getMemes(imgurClient, page)
-    if (err != nil) {
-      glog.Error(fmt.Sprintf("Could not retrieve memes on page: %d", page), err)
-      continue
+// Convert a phrase into a list of keywords
+func getKeywordsFromPhrase(phrase string, wordType models.WordType) ([]string) {
+  phrase = regNewline.ReplaceAllString(phrase, " ")
+  phrase = regBackslashN.ReplaceAllString(phrase, " ")
+  phrase = regNonLetters.ReplaceAllString(phrase, "")
+  phrase = strings.ToLower(phrase)
+  //fmt.Println(phrase)
+  
+  keywordList := strings.Split(phrase, " ")
+  keywordSet := make(map[string]bool)
+  for _, keyword := range keywordList {
+    if ((keyword != "") && !regStopWords.MatchString(keyword)) {
+      keywordSet[keyword] = true
     }
-    memes = append(memes, pageMemes...)
   }
 
-  return memes
-}*/
+  var keywords []string
+  for keyword := range keywordSet {
+    keywords = append(keywords, keyword)
+  }
+
+  return keywords
+}
 
 // Convert the given imgur.GalleryImageAlbums into memeRows
 // The memeRow returned will have Source, URL, NetUps, Views, BottomText, TopText, Keywords set
@@ -238,6 +228,15 @@ func convertImagesOrAlbumsToMemes(imagesOrAlbums []imgur.GalleryImageAlbum) ([]m
     }
   }
 
+  // Filter out memes with NetUps < 25
+  var filteredRawMemes []memeRow
+  for _, meme := range rawMemes {
+    if meme.NetUps >= 25 {
+      filteredRawMemes = append(filteredRawMemes, meme)
+    }
+  }
+  rawMemes = filteredRawMemes
+
   // Add in the remaining fields for memes
   var memes []memeRow
 
@@ -266,8 +265,8 @@ func convertImagesOrAlbumsToMemes(imagesOrAlbums []imgur.GalleryImageAlbum) ([]m
       meme.TopText = topText
       meme.BottomText = bottomText
 
-      // Get Keywords field
-      rawCaption, err := imageutil.CaptionUrl(meme.URL)
+      // Get caption
+      caption, err := imageutil.CaptionUrl(meme.URL)
       if (err != nil) {
         glog.Info(fmt.Sprintf("Unable to retrieve caption for image: %s", meme.URL), err)
         continue
@@ -275,19 +274,26 @@ func convertImagesOrAlbumsToMemes(imagesOrAlbums []imgur.GalleryImageAlbum) ([]m
       //fmt.Println(rawCaption)
       //fmt.Println(meme.URL, meme.NetUps, meme.Views, caption)
       
-      rawCaption = regBackslashN.ReplaceAllString(rawCaption, " ")
-      caption := regNonLetters.ReplaceAllString(rawCaption, "")
-      rawCaptionWords := strings.Split(caption, " ")
-      keywordSet := make(map[string]bool)
-      for _, rawCaptionWord := range rawCaptionWords {
-        captionWord := strings.ToLower(rawCaptionWord)
-        if (captionWord != "") && !regStopWords.MatchString(captionWord) {
-          keywordSet[captionWord] = true
-        }
+      // Get Keywords
+      textKeywords := getKeywordsFromPhrase(meme.TopText + " " + meme.BottomText, models.WordTypeMemeText)
+      captionKeywords := getKeywordsFromPhrase(caption, models.WordTypeCaption)
+
+      //fmt.Println(textKeywords, captionKeywords)
+
+      var keywords []memeKeywordRow
+      for _, textKeyword := range textKeywords {
+        keywords = append(keywords, memeKeywordRow{
+          Keyword: textKeyword,
+          WordType: models.WordTypeMemeText,
+          Weight: 1,
+        })
       }
-      var keywords []string
-      for keyword := range keywordSet {
-        keywords = append(keywords, keyword)
+      for _, captionKeyword := range captionKeywords {
+        keywords = append(keywords, memeKeywordRow{
+          Keyword: captionKeyword,
+          WordType: models.WordTypeCaption,
+          Weight: 1,
+        })
       }
       meme.Keywords = keywords
       
@@ -342,6 +348,7 @@ func divideIntoOldAndNewMemes(memes []memeRow) ([]memeRow, []memeRow, error) {
   return oldMemes, newMemes, nil
 }
 
+// Updating existing memes in the database
 func updateMemes(memes []memeRow) (error) {
   // TODO: Modify so we don't delete all keywords every time
   // Delete meme keywords
@@ -406,13 +413,15 @@ func updateMemes(memes []memeRow) (error) {
     for _, keyword := range meme.Keywords {
       memeKeywordRowValues = append(memeKeywordRowValues, []interface{}{
         meme.ID,
-        keyword,
+        keyword.Keyword,
+        keyword.WordType,
+        keyword.Weight,
       })
     }
   }
   builder := squirrel.
     Insert("alpha.meme_keyword").
-    Columns("meme_id", "keyword")
+    Columns("meme_id", "keyword", "word_type", "weight")
   for _, memeKeywordRowValue := range memeKeywordRowValues {
     builder = builder.Values(memeKeywordRowValue...)
   }
@@ -429,6 +438,7 @@ func updateMemes(memes []memeRow) (error) {
   return nil
 }
 
+// Insert new memes into the database
 func insertMemes(memes [] memeRow) (error) {
   // Insert memes
   memeRowValues := make([][]interface{}, len(memes))
@@ -503,13 +513,15 @@ func insertMemes(memes [] memeRow) (error) {
     for _, keyword := range meme.Keywords {
       memeKeywordRowValues = append(memeKeywordRowValues, []interface{}{
         urlToIdMap[meme.URL],
-        keyword,
+        keyword.Keyword,
+        keyword.WordType,
+        keyword.Weight,
       })
     }
   }
   builder = squirrel.
     Insert("alpha.meme_keyword").
-    Columns("meme_id", "keyword")
+    Columns("meme_id", "keyword", "word_type", "weight")
   for _, memeKeywordRowValue := range memeKeywordRowValues {
     builder = builder.Values(memeKeywordRowValue...)
   }
@@ -526,6 +538,7 @@ func insertMemes(memes [] memeRow) (error) {
   return nil
 }
 
+// Process, and upload into the database all images tagged as memes
 func loadImagesOrAlbums(imagesOrAlbums []imgur.GalleryImageAlbum) (error) {
   // Convert the imgur.GalleryImageAlbums into memeRows
   //fmt.Println(0)
@@ -564,6 +577,7 @@ func loadImagesOrAlbums(imagesOrAlbums []imgur.GalleryImageAlbum) (error) {
   return nil
 }
 
+// Retrieve data for, process, and upload into the database all images tagged as memes on a certain page
 func loadMemesForPage(page int) (error) {
   // Get all imgur.GalleryImageAlbums tagged as memes on page
   imagesOrAlbums, err := getImagesOrAlbumsOnPage(page)
@@ -578,6 +592,7 @@ func loadMemesForPage(page int) (error) {
   return nil
 }
 
+// Retrieve data for, process, and upload into the database all images tagged as memes that have the given ids
 func loadMemesWithIds() (error) {
   // Get all imgur.GalleryImageAlbums with given ids
   imagesOrAlbums, err := getImagesOrAlbumsWithIds()
