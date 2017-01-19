@@ -8,19 +8,21 @@ import (
   "strings"
   "../shared/db"
   "../shared/imageutil"
-  "github.com/harrisonzhao/superanswer/models"
+  "../models"
   "github.com/golang/glog"
   "image"
   _ "image/png"
   "github.com/Masterminds/squirrel"
+  "github.com/sajari/fuzzy"
+  "../shared/spellcheck"
 )
 
 // Script parameters (Change ONLY these!)
 var page_mode = true // True: Load memes by page, False: Load individual memes
 
-var page_start = 20 // Will load memes from, and including, this page
-var page_end = 40 // Will load memes up to, but not including, this page
-var insert_limit = 100 // Will insert the first insert_limit memes with all fields from each page into the database
+var page_start = 0 // Will load memes from, and including, this page
+var page_end = 1 // Will load memes up to, but not including, this page
+var insert_limit = 5 // Will insert the first insert_limit memes with all fields from each page into the database
 
 var meme_id_list = []int{45} // Will load memes whose ids are in this list
 //87,113,114,115,137,162,185,245,258,259,264,273
@@ -48,6 +50,7 @@ var regStopWords, _ = regexp.Compile(
 // Non-final statics
 var db models.XODB
 var imgurClient *imgur.Client
+var spellChecker *fuzzy.Model
 
 // Tag struct to help in parsing image tag api call responses
 type tag struct {
@@ -130,7 +133,7 @@ func getImagesOrAlbumsWithIds() ([]imgur.GalleryImageAlbum, error) {
   if (err != nil) {
     return nil, err
   }
-  fmt.Println(sql, args)
+  //fmt.Println(sql, args)
   rows, err := db.Query(sql, args...)
   if (err != nil) {
     return nil, err
@@ -170,28 +173,50 @@ func getImagesOrAlbumsWithIds() ([]imgur.GalleryImageAlbum, error) {
   return imagesOrAlbums, nil
 }
 
-// Convert a phrase into a list of keywords
-func getKeywordsFromPhrase(phrase string, wordType models.WordType) ([]string) {
+// Convert a phrase into a list of memeKeywordRows
+func getKeywordsFromPhrase(phrase string, wordType models.WordType) ([]memeKeywordRow) {
+  // Get ride of new lines and non-alphabet characters in, and lower-case, phrase
   phrase = regNewline.ReplaceAllString(phrase, " ")
   phrase = regBackslashN.ReplaceAllString(phrase, " ")
   phrase = regNonLetters.ReplaceAllString(phrase, "")
   phrase = strings.ToLower(phrase)
   //fmt.Println(phrase)
   
+  // Split phrase by spaces, and get the set of keywords from the resulting list
   keywordList := strings.Split(phrase, " ")
-  keywordSet := make(map[string]bool)
+  keywordRowSet := make(map[string]memeKeywordRow)
+
   for _, keyword := range keywordList {
     if ((keyword != "") && !regStopWords.MatchString(keyword)) {
-      keywordSet[keyword] = true
+      keywordRowSet[keyword] = memeKeywordRow{
+        Keyword: keyword,
+        WordType: wordType,
+        Weight: 1,
+      };
+
+      // Add spell checked keywords if phrase is a caption
+      if (wordType == models.WordTypeMemeText) {
+        keywordSpellChecked := spellChecker.SpellCheck(keyword)
+        keywordSpellChecked = regNonLetters.ReplaceAllString(keywordSpellChecked, "")
+        keywordSpellChecked = strings.ToLower(keywordSpellChecked)
+
+        if ((keyword != keywordSpellChecked) && !regStopWords.MatchString(keywordSpellChecked)) {
+          keywordRowSet[keywordSpellChecked] = memeKeywordRow{
+            Keyword: keywordSpellChecked,
+            WordType: models.WordTypeSpellcheck,
+            Weight: 1,
+          };
+        }
+      }
     }
   }
 
-  var keywords []string
-  for keyword := range keywordSet {
-    keywords = append(keywords, keyword)
+  var keywordRows []memeKeywordRow
+  for _, keywordRow := range keywordRowSet {
+    keywordRows = append(keywordRows, keywordRow)
   }
 
-  return keywords
+  return keywordRows
 }
 
 // Convert the given imgur.GalleryImageAlbums into memeRows
@@ -280,7 +305,7 @@ func convertImagesOrAlbumsToMemes(imagesOrAlbums []imgur.GalleryImageAlbum) ([]m
 
       //fmt.Println(textKeywords, captionKeywords)
 
-      var keywords []memeKeywordRow
+      /*var keywords []memeKeywordRow
       for _, textKeyword := range textKeywords {
         keywords = append(keywords, memeKeywordRow{
           Keyword: textKeyword,
@@ -294,8 +319,8 @@ func convertImagesOrAlbumsToMemes(imagesOrAlbums []imgur.GalleryImageAlbum) ([]m
           WordType: models.WordTypeCaption,
           Weight: 1,
         })
-      }
-      meme.Keywords = keywords
+      }*/
+      meme.Keywords = append(textKeywords, captionKeywords...)
       
       memes = append(memes, meme)
     }
@@ -363,7 +388,7 @@ func updateMemes(memes []memeRow) (error) {
   if (err != nil) {
     return err
   }
-  fmt.Println(sql, args)
+  //fmt.Println(sql, args)
   _, err = db.Exec(sql, args...)
   if (err != nil) {
     return err
@@ -391,7 +416,7 @@ func updateMemes(memes []memeRow) (error) {
     }
   }
   sql = sql + " ON DUPLICATE KEY UPDATE net_ups = VALUES(net_ups), views = VALUES(views), num_keywords = VALUES(num_keywords)"
-  fmt.Println(sql, memeRowValues)
+  //fmt.Println(sql, memeRowValues)
   _, err = db.Exec(sql, memeRowValues...)
   if (err != nil) {
     return err
@@ -429,7 +454,7 @@ func updateMemes(memes []memeRow) (error) {
   if (err != nil) {
     return err
   }
-  fmt.Println(sql, args)
+  //fmt.Println(sql, args)
   _, err = db.Exec(sql, args...)
   if (err != nil) {
     return err
@@ -464,7 +489,7 @@ func insertMemes(memes [] memeRow) (error) {
   if (err != nil) {
     return err
   }
-  fmt.Println(sql, args)
+  //fmt.Println(sql, args)
   _, err = db.Exec(sql, args...)
   if (err != nil) {
     return err
@@ -493,7 +518,7 @@ func insertMemes(memes [] memeRow) (error) {
   if (err != nil) {
     return err
   }
-  fmt.Println(sql, args)
+  //fmt.Println(sql, args)
   rows, err := db.Query(sql, args...)
   if (err != nil) {
     return err
@@ -529,7 +554,7 @@ func insertMemes(memes [] memeRow) (error) {
   if (err != nil) {
     return err
   }
-  fmt.Println(sql, args)
+  //fmt.Println(sql, args)
   _, err = db.Exec(sql, args...)
   if (err != nil) {
     return err
@@ -556,8 +581,8 @@ func loadImagesOrAlbums(imagesOrAlbums []imgur.GalleryImageAlbum) (error) {
     return err
   }
 
-  fmt.Println(oldMemes)
-  fmt.Println(newMemes)
+  //fmt.Println(oldMemes)
+  //fmt.Println(newMemes)
 
   // Upload the meme data into the database
   if (len(oldMemes) > 0) {
@@ -613,6 +638,9 @@ func main() {
   dbutil.InitDb("alpha")
   db = dbutil.DbContext()
   imgurClient = imgur.NewClient(http.DefaultClient, client_id, client_secret)
+
+  // Initialize spell checker
+  spellChecker = spellcheckutil.GetSpellChecker()
 
   if (page_mode) {
     // Upsert memes for each page in range
