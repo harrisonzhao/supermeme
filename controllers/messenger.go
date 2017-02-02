@@ -105,7 +105,11 @@ func findBestMeme(senderId string, msg messenger.ReceivedMessage) error {
 	}
 	var meme *models.Meme
 	if bmr == nil {
-		meme, err = joinmodels.RandomMeme(db)
+		randomId, err := joinmodels.RandomMemeId(db)
+		if err != nil {
+			return err
+		}
+		meme, err = models.MemeByID(db, randomId)
 	} else {
 		meme, err = models.MemeByID(db, bmr.ID)	
 	}
