@@ -17,7 +17,7 @@ type dbConfig struct {
 
 var dbConfigs = map[string]dbConfig{
 	"alpha": dbConfig{
-		Host:     "52.186.123.148",
+		Host:     "13.82.226.138",
 		Username: "superanswer",
 		Password: "supermeme2",
 	},
