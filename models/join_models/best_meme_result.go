@@ -53,6 +53,9 @@ func BestMemeResultsByKeywords(db models.XODB, keywords []string, limit int) (*B
 
 		results = append(results, &bmr)
 	}
+	if len(results) == 0 {
+		return nil, err
+	}
 	randIndex := randomGenerator.Intn(len(results))
 
 	return results[randIndex], nil
