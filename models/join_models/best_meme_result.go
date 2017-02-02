@@ -1,16 +1,20 @@
 package joinmodels
 
 import (
+	"math/rand"
+
 	"github.com/Masterminds/squirrel"
 	"github.com/harrisonzhao/supermeme/models"
 )
+
+var randomGenerator *rand.Rand = rand.New(rand.NewSource(9724597496))
 
 type BestMemeResult struct {
 	ID    int
 	Score float64
 }
 
-func BestMemeResultsByKeywords(db models.XODB, keywords []string) (*BestMemeResult, error) {
+func BestMemeResultsByKeywords(db models.XODB, keywords []string, limit int) (*BestMemeResult, error) {
 	if len(keywords) == 0 {
 		return nil, nil
 	}
@@ -26,7 +30,7 @@ func BestMemeResultsByKeywords(db models.XODB, keywords []string) (*BestMemeResu
 		Where("mk.keyword IN ("+squirrel.Placeholders(len(keywords))+")", keywordArgs...).
 		GroupBy("m.id").
 		OrderBy("score DESC").
-		Limit(1).
+		Limit(uint64(limit)).
 		ToSql()
 	if err != nil {
 		return nil, err
@@ -37,7 +41,7 @@ func BestMemeResultsByKeywords(db models.XODB, keywords []string) (*BestMemeResu
 	}
 	defer rows.Close()
 	// load results
-	var res *BestMemeResult = nil
+	results := make([]*BestMemeResult, 0)
 	for rows.Next() {
 		bmr := BestMemeResult{}
 
@@ -47,8 +51,9 @@ func BestMemeResultsByKeywords(db models.XODB, keywords []string) (*BestMemeResu
 			return nil, err
 		}
 
-		res = &bmr
+		results = append(results, &bmr)
 	}
+	randIndex := randomGenerator.Intn(len(results))
 
-	return res, nil
+	return results[randIndex], nil
 }
