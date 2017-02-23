@@ -99,9 +99,13 @@ func findBestMeme(senderId string, msg messenger.ReceivedMessage) error {
 		}
 	}
 	db := dbutil.DbContext()
-	bmr, err := joinmodels.BestMemeResultsByKeywords(db, queryWords, 10)
-	if err != nil {
-		return err
+	var bmr *joinmodels.BestMemeResult = nil
+	var err error
+	if len(imageUrl) == 0 {
+		bmr, err = joinmodels.BestMemeResultsByKeywords(db, queryWords, 10)
+		if err != nil {
+			return err
+		}
 	}
 	var meme *models.Meme
 	if bmr == nil {
